@@ -1,0 +1,52 @@
+name: Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      tagname:
+        description: tag name (with 'v', v4.6.9.0)
+        type: string
+        required: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: omanshkrishn/materialgram:latest
+
+    steps:
+      - name: Update System
+        run: |
+          pacman -Syu --noconfirm
+          pacman -Sc --noconfirm
+
+      - name: Build AyuGram
+        run: |
+          [ -d "/home/builder" ] && cd /home/builder || { mkdir -p /home/builder && cd /home/builder; }
+          git clone https://github.com/AyuGram/AyuGramDesktop --recursive -b ${{ github.event.inputs.tagname }} ayugram && cd ayugram
+          cmake \
+           -B build \
+           -G Ninja \
+           -DCMAKE_INSTALL_PREFIX="/usr" \
+           -DCMAKE_BUILD_TYPE=Release \
+           -DTDESKTOP_API_ID=611335 \
+           -DTDESKTOP_API_HASH=d524b414d21f4d37f08684c1df41ac9c \
+           -DDESKTOP_APP_DISABLE_AUTOUPDATE=True \
+           -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON 
+          ninja -C build -j$(nproc --all) 
+          mkdir fakeroot && DESTDIR=$(pwd)/fakeroot ninja -C build install && cd fakeroot 
+          tar -czvf ayugram-${{ github.event.inputs.tagname }}.tar.gz usr  
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: materialgram-${{ github.event.inputs.tagname }}
+          path: /home/builder/ayugram/fakeroot/ayugram-${{ github.event.inputs.tagname }}.tar.gz
+
+      - name: Upload artifact to Release
+        run: |
+          echo ${{ secrets.PAT }} | gh auth login --with-token
+          TIME=$(date +"%y%m%d-%H%M%S")
+          VERSION=${{ github.event.inputs.tagname }}-${TIME}
+          gh release create ${VERSION} /home/builder/ayugram/fakeroot/ayugram-${{ github.event.inputs.tagname }}.tar.gz --repo omansh-krishn/ayugram-binaries --title ${VERSION} --notes ${VERSION}
+
